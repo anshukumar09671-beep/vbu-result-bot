@@ -19,7 +19,7 @@ def get_results():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        page.goto(VBU_URL, wait_until="networkidle", timeout=60000)
+        page.goto(VBU_URL, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(5000)
 
         links = page.locator("a[href]").all()
