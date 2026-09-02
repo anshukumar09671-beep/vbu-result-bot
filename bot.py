@@ -1,83 +1,93 @@
 import os
 import json
-import time
-import requests
-from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from playwright.sync_api import sync_playwright
 
-# =========================
-# VBU SETTINGS
-# =========================
+VBU_URL = "https://www.vbu.ac.in/notice/result"
 
-VBU_URL = "https://www.vbu.ac.in/"
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
 DATA_FILE = "seen.json"
 
 
-# =========================
-# VBU RESULT CHECK
-# =========================
-
 def get_results():
-
-    response = requests.get(
-        VBU_URL,
-        timeout=30,
-        headers={
-            "User-Agent": "Mozilla/5.0"
-        }
-    )
-
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
 
     results = []
 
-    for a in soup.find_all("a", href=True):
+    with sync_playwright() as p:
 
-        title = a.get_text(" ", strip=True)
+        browser = p.chromium.launch(headless=True)
 
-        if not title:
-            continue
+        page = browser.new_page()
 
-        if "result" not in title.lower():
-            continue
+        print("🌐 VBU Result page opening...")
 
-        link = urljoin(VBU_URL, a["href"])
+        page.goto(
+            VBU_URL,
+            wait_until="networkidle",
+            timeout=60000
+        )
 
-        results.append({
-            "title": title,
-            "link": link
-        })
+        page.wait_for_timeout(5000)
+
+        # सभी links पढ़ना
+        links = page.locator("a[href]")
+
+        count = links.count()
+
+        print("🔗 Links found:", count)
+
+        for i in range(count):
+
+            try:
+
+                a = links.nth(i)
+
+                title = a.inner_text().strip()
+
+                href = a.get_attribute("href")
+
+                if not title or not href:
+                    continue
+
+                # सिर्फ Result वाले links
+                if "result" not in title.lower():
+                    continue
+
+                link = urljoin(VBU_URL, href)
+
+                results.append({
+                    "title": title,
+                    "link": link
+                })
+
+            except Exception:
+                continue
+
+        browser.close()
 
     # Duplicate हटाना
-    unique_results = []
-    already_found = set()
+    unique = []
+    seen_keys = set()
 
     for result in results:
 
         key = result["title"] + "|" + result["link"]
 
-        if key not in already_found:
+        if key not in seen_keys:
 
-            already_found.add(key)
-            unique_results.append(result)
+            seen_keys.add(key)
+            unique.append(result)
 
-    return unique_results
+    return unique
 
-
-# =========================
-# TELEGRAM MESSAGE
-# =========================
 
 def send_telegram(message):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    response = requests.post(
+    response = __import__("requests").post(
         url,
         data={
             "chat_id": CHAT_ID,
@@ -91,10 +101,6 @@ def send_telegram(message):
 
     response.raise_for_status()
 
-
-# =========================
-# LOAD OLD RESULTS
-# =========================
 
 def load_seen():
 
@@ -116,10 +122,6 @@ def load_seen():
         return set()
 
 
-# =========================
-# SAVE RESULTS
-# =========================
-
 def save_seen(seen):
 
     with open(
@@ -136,10 +138,6 @@ def save_seen(seen):
         )
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
 
     print("🔎 VBU Result checking...")
@@ -150,10 +148,7 @@ def main():
 
     print("📄 Results found:", len(results))
 
-
-    # पहली बार पुराने results को सिर्फ save करेंगे
-    # ताकि पुराने result का spam न आए
-
+    # पहली बार पुराने results save
     if not seen:
 
         for result in results:
@@ -172,11 +167,7 @@ def main():
 
         return
 
-
-    # =========================
-    # NEW RESULT FIND
-    # =========================
-
+    # नए results
     new_results = []
 
     for result in results:
@@ -190,17 +181,11 @@ def main():
         if key not in seen:
 
             new_results.append(result)
-
             seen.add(key)
-
 
     print("🆕 New results:", len(new_results))
 
-
-    # =========================
-    # SEND TELEGRAM
-    # =========================
-
+    # Telegram भेजना
     for result in new_results:
 
         message = (
@@ -214,15 +199,10 @@ def main():
 
         print("✅ Telegram sent.")
 
-
     save_seen(seen)
 
     print("✅ Check complete.")
 
-
-# =========================
-# START
-# =========================
 
 if __name__ == "__main__":
     main()
