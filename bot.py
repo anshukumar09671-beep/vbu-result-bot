@@ -1,8 +1,8 @@
 import os
 import json
+import time
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from playwright.sync_api import sync_playwright
 
 VBU_URL = "https://www.vbu.ac.in/notice/result"
 
@@ -13,35 +13,57 @@ DATA_FILE = "seen.json"
 
 
 def get_results():
-    response = requests.get(
-        VBU_URL,
-        timeout=30,
-        headers={"User-Agent": "Mozilla/5.0"}
-    )
-
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
     results = []
 
-    for a in soup.find_all("a", href=True):
-        title = a.get_text(" ", strip=True)
-        link = urljoin(VBU_URL, a["href"])
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-        if "result" in title.lower():
-            results.append({
-                "title": title,
-                "link": link
-            })
+        page.goto(VBU_URL, wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(5000)
 
-    return results
+        links = page.locator("a[href]").all()
+
+        for a in links:
+            try:
+                text = a.inner_text().strip()
+                href = a.get_attribute("href")
+
+                if not text or not href:
+                    continue
+
+                if "result" in text.lower():
+                    if href.startswith("/"):
+                        href = "https://www.vbu.ac.in" + href
+
+                    results.append({
+                        "title": text,
+                        "link": href
+                    })
+
+            except:
+                continue
+
+        browser.close()
+
+    # Duplicate हटाना
+    unique = []
+    seen = set()
+
+    for item in results:
+        key = item["title"] + "|" + item["link"]
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    return unique
 
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    requests.post(
+    response = requests.post(
         url,
         data={
             "chat_id": CHAT_ID,
@@ -51,10 +73,12 @@ def send_telegram(message):
         timeout=30
     )
 
+    print("Telegram:", response.text)
+
 
 def load_seen():
     if not os.path.exists(DATA_FILE):
-        return None
+        return set()
 
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -69,19 +93,23 @@ def save_seen(seen):
 
 
 def main():
-    results = get_results()
-
-    current = set()
-
-    for result in results:
-        key = result["title"] + "|" + result["link"]
-        current.add(key)
+    print("🔎 VBU Result checking...")
 
     seen = load_seen()
+    results = get_results()
 
-    # पहली बार: पुराने results को सिर्फ याद रखो
-    if seen is None:
-        save_seen(current)
+    print("📋 Results found:", len(results))
+
+    # पहली बार पुराने results को सिर्फ save करेंगे
+    # ताकि पुराने results का spam न आए
+    if not seen:
+        for result in results:
+            key = result["title"] + "|" + result["link"]
+            seen.add(key)
+
+        save_seen(seen)
+
+        print("✅ Initial results saved.")
         return
 
     new_results = []
@@ -91,8 +119,9 @@ def main():
 
         if key not in seen:
             new_results.append(result)
+            seen.add(key)
 
-    for result in reversed(new_results):
+    for result in new_results:
         message = (
             "🚨 VBU NEW RESULT 🚨\n\n"
             f"📢 {result['title']}\n\n"
@@ -102,7 +131,9 @@ def main():
 
         send_telegram(message)
 
-    save_seen(seen | current)
+    save_seen(seen)
+
+    print("✅ Check complete.")
 
 
 if __name__ == "__main__":
