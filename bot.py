@@ -102,22 +102,22 @@ def main():
 
     # पहली बार पुराने results को सिर्फ save करेंगे
     # ताकि पुराने results का spam न आए
-  if not seen:
-    for result in results:
-        key = result["title"] + "|" + result["link"]
-        seen.add(key)
+ if not seen:
+            for result in results:
+                key = result["title"] + "|" + result["link"]
+                seen.add(key)
 
-        message = (
-            "🚨 VBU NEW RESULT 🚨\n\n"
-            f"📢 {result['title']}\n\n"
-            f"🔗 {result['link']}\n\n"
-            "🏫 Vinoba Bhave University"
-        )
+                message = (
+                    "🚨 VBU NEW RESULT 🚨\n\n"
+                    f"📢 {result['title']}\n\n"
+                    f"🔗 {result['link']}\n\n"
+                    "🏫 Vinoba Bhave University"
+                )
 
-        send_telegram(message)
+                send_telegram(message)
 
-    save_seen(seen)
-    return
+            save_seen(seen)
+            return
 
         print("✅ Initial results saved.")
         return
