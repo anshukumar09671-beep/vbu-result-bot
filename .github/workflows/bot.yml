@@ -2,8 +2,6 @@ name: VBU Result Monitor
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
 
 jobs:
   monitor:
@@ -11,6 +9,7 @@ jobs:
     timeout-minutes: 350
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -19,9 +18,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install packages
         run: |
-          pip install requests beautifulsoup4 playwright
+          pip install requests playwright beautifulsoup4
           playwright install chromium --with-deps
 
       - name: Start VBU monitor
@@ -31,5 +30,5 @@ jobs:
         run: |
           while true; do
             python bot.py || true
-            sleep 3
+            sleep 5
           done
