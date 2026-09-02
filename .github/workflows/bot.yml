@@ -3,7 +3,7 @@ name: VBU Result Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/5 * * * *"
 
 jobs:
   monitor:
@@ -19,8 +19,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install packages
-        run: pip install requests beautifulsoup4
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 playwright
+          playwright install chromium --with-deps
 
       - name: Start VBU monitor
         env:
