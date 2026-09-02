@@ -9,7 +9,6 @@ jobs:
     timeout-minutes: 350
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -22,6 +21,15 @@ jobs:
         run: |
           pip install requests playwright beautifulsoup4
           playwright install chromium --with-deps
+
+      - name: Test Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=✅ VBU Bot Telegram Test Successful"
 
       - name: Start VBU monitor
         env:
