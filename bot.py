@@ -1,9 +1,11 @@
 import os
 import json
+import requests
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
-VBU_URL = "https://www.vbu.ac.in/notice/result"
+VBU_RESULT_URL = "https://www.vbu.ac.in/notice/result"
+VBU_NOTICE_URL = "https://www.vbu.ac.in/notice"
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -11,56 +13,59 @@ CHAT_ID = os.environ["CHAT_ID"]
 DATA_FILE = "seen.json"
 
 
-def get_results():
-
-    results = []
+def get_vbu_items(url, item_type):
+    items = []
 
     with sync_playwright() as p:
-
         browser = p.chromium.launch(headless=True)
-
         page = browser.new_page()
 
-        print("🌐 VBU Result page opening...")
+        print("🌐 Opening:", url)
 
         page.goto(
-            VBU_URL,
-            wait_until="networkidle",
+            url,
+            wait_until="domcontentloaded",
             timeout=60000
         )
 
         page.wait_for_timeout(5000)
 
-        # सभी links पढ़ना
         links = page.locator("a[href]")
-
         count = links.count()
 
         print("🔗 Links found:", count)
 
         for i in range(count):
-
             try:
-
                 a = links.nth(i)
 
                 title = a.inner_text().strip()
-
                 href = a.get_attribute("href")
 
                 if not title or not href:
                     continue
 
-                # सिर्फ Result वाले links
-                if "result" not in title.lower():
-                    continue
+                link = urljoin(url, href)
 
-                link = urljoin(VBU_URL, href)
+                text = title.lower()
 
-                results.append({
-                    "title": title,
-                    "link": link
-                })
+                # Result page
+                if item_type == "result":
+                    if "result" in text:
+                        items.append({
+                            "type": "result",
+                            "title": title,
+                            "link": link
+                        })
+
+                # Notice page
+                elif item_type == "notice":
+                    if title:
+                        items.append({
+                            "type": "notice",
+                            "title": title,
+                            "link": link
+                        })
 
             except Exception:
                 continue
@@ -69,25 +74,22 @@ def get_results():
 
     # Duplicate हटाना
     unique = []
-    seen_keys = set()
+    found = set()
 
-    for result in results:
+    for item in items:
+        key = item["type"] + "|" + item["title"] + "|" + item["link"]
 
-        key = result["title"] + "|" + result["link"]
-
-        if key not in seen_keys:
-
-            seen_keys.add(key)
-            unique.append(result)
+        if key not in found:
+            found.add(key)
+            unique.append(item)
 
     return unique
 
 
 def send_telegram(message):
-
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    response = __import__("requests").post(
+    response = requests.post(
         url,
         data={
             "chat_id": CHAT_ID,
@@ -103,33 +105,18 @@ def send_telegram(message):
 
 
 def load_seen():
-
     if not os.path.exists(DATA_FILE):
         return set()
 
     try:
-
-        with open(
-            DATA_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             return set(json.load(f))
-
     except Exception:
-
         return set()
 
 
 def save_seen(seen):
-
-    with open(
-        DATA_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(
             list(seen),
             f,
@@ -140,64 +127,114 @@ def save_seen(seen):
 
 def main():
 
-    print("🔎 VBU Result checking...")
+    print("🚀 VBU Result + Notice Bot Started")
 
     seen = load_seen()
 
-    results = get_results()
+    # =========================
+    # RESULT CHECK
+    # =========================
+
+    results = get_vbu_items(
+        VBU_RESULT_URL,
+        "result"
+    )
 
     print("📄 Results found:", len(results))
 
-    # पहली बार पुराने results save
+
+    # =========================
+    # NOTICE CHECK
+    # =========================
+
+    notices = get_vbu_items(
+        VBU_NOTICE_URL,
+        "notice"
+    )
+
+    print("📢 Notices found:", len(notices))
+
+
+    all_items = results + notices
+
+
+    # =========================
+    # FIRST RUN
+    # =========================
+
     if not seen:
 
-        for result in results:
+        for item in all_items:
 
             key = (
-                result["title"]
+                item["type"]
                 + "|"
-                + result["link"]
+                + item["title"]
+                + "|"
+                + item["link"]
             )
 
             seen.add(key)
 
         save_seen(seen)
 
-        print("✅ Initial results saved.")
-
+        print("✅ Existing items saved.")
         return
 
-    # नए results
-    new_results = []
 
-    for result in results:
+    # =========================
+    # NEW ITEMS
+    # =========================
+
+    new_items = []
+
+    for item in all_items:
 
         key = (
-            result["title"]
+            item["type"]
             + "|"
-            + result["link"]
+            + item["title"]
+            + "|"
+            + item["link"]
         )
 
         if key not in seen:
 
-            new_results.append(result)
+            new_items.append(item)
             seen.add(key)
 
-    print("🆕 New results:", len(new_results))
 
-    # Telegram भेजना
-    for result in new_results:
+    print("🆕 New items:", len(new_items))
 
-        message = (
-            "🚨 VBU NEW RESULT 🚨\n\n"
-            f"📢 {result['title']}\n\n"
-            f"🔗 {result['link']}\n\n"
-            "🏫 Vinoba Bhave University"
-        )
+
+    # =========================
+    # SEND TELEGRAM
+    # =========================
+
+    for item in new_items:
+
+        if item["type"] == "result":
+
+            message = (
+                "🚨 VBU NEW RESULT 🚨\n\n"
+                f"📢 {item['title']}\n\n"
+                f"🔗 {item['link']}\n\n"
+                "🏫 Vinoba Bhave University"
+            )
+
+        else:
+
+            message = (
+                "🔔 VBU NEW NOTICE 🔔\n\n"
+                f"📢 {item['title']}\n\n"
+                f"🔗 {item['link']}\n\n"
+                "🏫 Vinoba Bhave University"
+            )
 
         send_telegram(message)
 
-        print("✅ Telegram sent.")
+        print("✅ Telegram sent:", item["title"])
+
 
     save_seen(seen)
 
