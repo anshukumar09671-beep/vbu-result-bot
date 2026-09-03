@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import requests
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
@@ -11,6 +12,62 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
 DATA_FILE = "seen.json"
+
+
+# =========================================
+# CHECK VALID LINK
+# =========================================
+
+def valid_link(title, href):
+
+    if not title or not href:
+        return False
+
+    title = " ".join(title.split()).strip()
+    href = href.strip()
+
+    low_title = title.lower()
+    low_href = href.lower()
+
+    # बेकार / dynamic links
+    bad = [
+        "javascript:",
+        "void(0)",
+        "{{",
+        "}}",
+        "pageno",
+        "?page=",
+        "&page=",
+        "#",
+        "/login",
+        "/register"
+    ]
+
+    for x in bad:
+        if x in low_title or x in low_href:
+            return False
+
+    # बहुत छोटे titles जैसे "of", "next", "prev"
+    if len(title) < 8:
+        return False
+
+    navigation = [
+        "next",
+        "previous",
+        "prev",
+        "first",
+        "last",
+        "home",
+        "login",
+        "register",
+        "search",
+        "menu"
+    ]
+
+    if low_title in navigation:
+        return False
+
+    return True
 
 
 # =========================================
@@ -41,7 +98,7 @@ def get_vbu_items(url, item_type):
 
         count = links.count()
 
-        print("🔗 Links found:", count)
+        print("🔗 Total links:", count)
 
         for i in range(count):
 
@@ -52,41 +109,15 @@ def get_vbu_items(url, item_type):
                 title = a.inner_text().strip()
                 href = a.get_attribute("href")
 
-                if not title or not href:
+                title = " ".join(title.split())
+
+                if not valid_link(title, href):
                     continue
 
-                title_clean = " ".join(title.split())
+                link = urljoin(url, href)
 
-                href_clean = href.strip()
-
-                # =====================================
-                # INVALID / DYNAMIC LINKS
-                # =====================================
-
-                invalid_words = [
-                    "{{",
-                    "}}",
-                    "javascript:",
-                    "void(0)",
-                    "pageno",
-                    "?page=",
-                    "&page=",
-                    "login",
-                    "register",
-                    "#"
-                ]
-
-                combined = (
-                    title_clean.lower()
-                    + " "
-                    + href_clean.lower()
-                )
-
-                if any(word in combined for word in invalid_words):
-                    continue
-
-
-                link = urljoin(url, href_clean)
+                title_lower = title.lower()
+                link_lower = link.lower()
 
 
                 # =====================================
@@ -95,18 +126,24 @@ def get_vbu_items(url, item_type):
 
                 if item_type == "result":
 
-                    text = title_clean.lower()
+                    # Result page पर केवल actual result entries
+                    if "result" not in title_lower:
+                        continue
 
+                    # navigation/template हटाना
                     if (
-                        "result" in text
-                        or "results" in text
+                        "page" in title_lower
+                        or "next" in title_lower
+                        or "prev" in title_lower
+                        or "previous" in title_lower
                     ):
+                        continue
 
-                        items.append({
-                            "type": "result",
-                            "title": title_clean,
-                            "link": link
-                        })
+                    items.append({
+                        "type": "result",
+                        "title": title,
+                        "link": link
+                    })
 
 
                 # =====================================
@@ -115,33 +152,38 @@ def get_vbu_items(url, item_type):
 
                 elif item_type == "notice":
 
-                    title_lower = title_clean.lower()
-                    link_lower = link.lower()
-
-                    # केवल ऐसे links जिनमें notice/publication
-                    # अथवा document/pdf जैसा संकेत हो
-
-                    if (
+                    # सिर्फ वास्तविक notice/document links
+                    is_notice = (
                         "notice" in title_lower
                         or "notification" in title_lower
-                        or "notice" in link_lower
+                        or "circular" in title_lower
                         or "publication" in link_lower
                         or ".pdf" in link_lower
-                    ):
+                    )
 
-                        items.append({
-                            "type": "notice",
-                            "title": title_clean,
-                            "link": link
-                        })
+                    if not is_notice:
+                        continue
 
+                    # Dynamic/template entries फिर से block
+                    if any(x in title_lower for x in [
+                        "{{",
+                        "pageno",
+                        "page",
+                        "javascript",
+                        "void"
+                    ]):
+                        continue
+
+                    items.append({
+                        "type": "notice",
+                        "title": title,
+                        "link": link
+                    })
 
             except Exception as e:
 
-                print("⚠️ Link error:", e)
-
+                print("⚠️ Skip:", e)
                 continue
-
 
         browser.close()
 
@@ -151,7 +193,6 @@ def get_vbu_items(url, item_type):
     # =========================================
 
     unique = []
-
     found = set()
 
     for item in items:
@@ -167,9 +208,7 @@ def get_vbu_items(url, item_type):
         if key not in found:
 
             found.add(key)
-
             unique.append(item)
-
 
     return unique
 
@@ -198,13 +237,12 @@ def send_telegram(message):
 
 
 # =========================================
-# LOAD SEEN
+# SEEN DATA
 # =========================================
 
 def load_seen():
 
     if not os.path.exists(DATA_FILE):
-
         return set()
 
     try:
@@ -221,10 +259,6 @@ def load_seen():
 
         return set()
 
-
-# =========================================
-# SAVE SEEN
-# =========================================
 
 def save_seen(seen):
 
@@ -248,14 +282,14 @@ def save_seen(seen):
 
 def main():
 
-    print("🚀 VBU Result + Notice Bot Started")
+    print("🚀 VBU Bot Started")
 
 
     seen = load_seen()
 
 
     # =========================================
-    # RESULT CHECK
+    # RESULT
     # =========================================
 
     results = get_vbu_items(
@@ -264,13 +298,13 @@ def main():
     )
 
     print(
-        "📄 Valid Results found:",
+        "📄 Valid Results:",
         len(results)
     )
 
 
     # =========================================
-    # NOTICE CHECK
+    # NOTICE
     # =========================================
 
     notices = get_vbu_items(
@@ -279,7 +313,7 @@ def main():
     )
 
     print(
-        "📢 Valid Notices found:",
+        "📢 Valid Notices:",
         len(notices)
     )
 
@@ -293,9 +327,7 @@ def main():
 
     if not seen:
 
-        print(
-            "🟢 First run detected."
-        )
+        print("🟢 First run")
 
         for item in all_items:
 
@@ -316,18 +348,17 @@ def main():
         )
 
         print(
-            "ℹ️ No Telegram message sent."
+            "🚫 No Telegram message sent."
         )
 
         return
 
 
     # =========================================
-    # FIND NEW ITEMS
+    # FIND NEW
     # =========================================
 
     new_items = []
-
 
     for item in all_items:
 
@@ -342,18 +373,17 @@ def main():
         if key not in seen:
 
             new_items.append(item)
-
             seen.add(key)
 
 
     print(
-        "🆕 New items:",
+        "🆕 NEW ITEMS:",
         len(new_items)
     )
 
 
     # =========================================
-    # SEND NEW ITEMS
+    # SEND
     # =========================================
 
     for item in new_items:
@@ -364,7 +394,7 @@ def main():
                 "🚨 VBU NEW RESULT 🚨\n\n"
                 f"📢 {item['title']}\n\n"
                 f"🔗 {item['link']}\n\n"
-                "🏫 Vinoba Bhave University"
+                "🏫 Vinoba Bhave University, Hazaribag"
             )
 
         else:
@@ -373,25 +403,21 @@ def main():
                 "🔔 VBU NEW NOTICE 🔔\n\n"
                 f"📢 {item['title']}\n\n"
                 f"🔗 {item['link']}\n\n"
-                "🏫 Vinoba Bhave University"
+                "🏫 Vinoba Bhave University, Hazaribag"
             )
 
 
         send_telegram(message)
 
-
         print(
-            "✅ Telegram sent:",
+            "✅ Sent:",
             item["title"]
         )
 
 
     save_seen(seen)
 
-
-    print(
-        "✅ Check complete."
-    )
+    print("✅ Check complete.")
 
 
 # =========================================
@@ -399,5 +425,4 @@ def main():
 # =========================================
 
 if __name__ == "__main__":
-
     main()
